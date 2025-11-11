@@ -1,0 +1,209 @@
+// Pin definition macros
+#define RESET PB1                // Arduino p9 -> p10 (SRCLR) Clear/Reset
+#define LATCH PB0                // Arduino p8 -> p12 (RCLR) Output Reg Clock
+#define SRCLK PD7                // Arduino p7 -> p11 (SRCLK) Shift Reg Clock
+#define SER PD6                  // Arduino p6 -> p14 (SER) Serial Input
+
+#define ISR_startStopButton PD3  // define pin 3 (int1) as the isr pin for the start/stop button
+#define ISR_resetButton PD2      // define Pin 2 (int0) as the isr pin for the reset button
+
+// Port definition macros
+#define RESET_PORT PORTB  
+#define LATCH_PORT PORTB
+
+#define SRCLK_PORT PORTD
+#define SER_PORT PORTD 
+#define ISR_PORT PORTD           // Port for ISR pins
+
+// Array of 8-bit data to be shifted into the shift register
+const uint8_t digitArray[] = 
+{
+  0xc0, // number 0
+  0xf9, // number 1
+  0xa4, // number 2
+  0xb0, // number 3
+  0x99, // number 4
+  0x92, // number 5
+  0x82, // number 6
+  0xf8, // number 7
+  0x80, // number 8
+  0x90, // number 9
+};
+
+// ISR flags
+volatile uint8_t resetState;         // 0 = default. 1 = reset
+volatile uint8_t runState;           // 0 = not running. 1 = running
+volatile uint8_t seconds;            // counter variable
+volatile uint8_t updateDisplayFlag;  // flag to update display
+
+//---------------------------------------MAIN CODE-----------------------------------------//
+void setup()
+{
+  //Serial communication at 9600 baud
+  Serial.begin(9600);
+  
+  // Initialize all hardware
+  InitaliseGPIO ();
+  initaliseInterrupts();
+  initaliseTimers();
+  
+  // Inital states
+  resetState = 0;
+  runState = 0;
+  // Set time to zero
+  seconds = 0;
+  displayNumber(seconds);
+  
+  // Debugging statement to confirm setup is running
+  Serial.println("Setup complete");
+}
+
+void loop()
+{
+ if (resetState)           // Polls for reset request
+ {
+   runState = 0;           // Stop count from increasing
+   seconds = 0;            // Reset count
+   updateDisplayFlag = 1;  // Signal to display 0
+   resetState = 0;         // resets flag
+ }
+ if (updateDisplayFlag)    // Polls for update display signal
+ {
+   displayNumber(seconds); // Displays seconds counted
+   updateDisplayFlag = 0;  // resets flag
+ }
+  
+  Serial.println(seconds);
+  
+}
+//-----------------------------------GPIO PIN SETTINGS----------------------------------------//
+
+// Sets pins as i/o and clears shift register
+void InitaliseGPIO ()
+{
+  // Set pins as outputs
+  DDRB |= _BV(LATCH) | _BV(RESET);  // Set LATCH and RESET pins as output (PB0, PB1)
+  DDRD |= _BV(SRCLK) | _BV(SER);    // Set SRCLK and SER pins as output (PD6, PD7)
+
+  // Clear shift register on reset
+  RESET_PORT &= ~(_BV(RESET));      // Set RESET pin low
+  RESET_PORT |= _BV(RESET);         // Set RESET pin high 
+
+  // Set ISR pins
+  DDRD &= ~(_BV(ISR_startStopButton) | _BV(ISR_resetButton));       // Enable pull-up resistor in button pins
+  ISR_PORT |= ( _BV(ISR_startStopButton) | _BV(ISR_resetButton) );  // Set button pins as inputs 
+}
+
+//----------------------------------------DISPLAY---------------------------------------------//
+
+// Displays number input (0-99) on 7 seg displays
+void displayNumber(uint8_t num) 
+{
+     num = (num > 99) ? 99 : num;   // If num > 99  --->  num = 99
+    
+    // Extract tens and ones digits
+    uint8_t tens = num / 10;        // Integer division
+    uint8_t ones = num % 10;        // Modulo 
+  
+    shiftInByte(digitArray[ones]);  // LSB shifted out
+    shiftInByte(digitArray[tens]);  // MSB shifted out
+}
+                            
+//------------------------------------SHIFT REGISTER-----------------------------------------//
+
+// Quick pin toggle function 
+// Inline means compiler replaces call with function body
+inline void pinToggle(volatile uint8_t &port, int pin)
+{
+  port^= _BV(pin);
+}
+
+// Function to shift in 1 bit to the register
+inline void shiftInBit(uint8_t bit)
+{ 
+  SER_PORT = (SER_PORT & ~_BV(SER)) | (bit << SER);  // Clears value and inputs bit value at SER
+
+  pinToggle(SRCLK_PORT, SRCLK);                      // Toggle clk to shift in bit at SER
+  pinToggle(SRCLK_PORT, SRCLK);                      // Call toggle twice to ensure complete pulse
+}
+
+// Function to shift in 1 byte at a time
+inline void shiftInByte(uint8_t data)
+{
+  for (int i = 7; i >= 0; i--)       // MSB first
+  { 
+    shiftInBit((data >> i) & 0x01);  // Shift out each bit from MSB to LSB
+  }
+  pinToggle(LATCH_PORT, LATCH);      // Toggle latch pin to output the data
+  pinToggle(LATCH_PORT, LATCH);      // Call toggle twice to ensure complete pulse
+}
+
+//----------------------------------EXTERNAL INTERRUPTS---------------------------------------//
+
+// Configuring External Interrupts
+void initaliseInterrupts()
+{
+  cli();                             // disable interrupts globally
+  
+  EIMSK |= _BV(INT0) | _BV(INT1);    // Enable INT0 and INT1
+  EICRA |= _BV(ISC01) | _BV(ISC11);  // Trigger on falling edge 
+  
+  sei();                             // Enable interrupts globally
+}
+
+// Interrupt Service Routines for INT0 and INT1
+ISR(INT0_vect)
+{
+ resetState = 1; // Reset request 
+}
+
+ISR(INT1_vect)
+{
+  
+  runState ^= 1; // Toggle between running and stopped
+}
+
+//-----------------------------------------TIMERS--------------------------------------------//
+
+// Configuring Timer1
+void initaliseTimers()
+{
+  cli();                   // disables global interrupts
+  
+  TCCR1A = 0;              // set entire TCCR1A register to 0
+  TCCR1B = 0;              // set entire TCCR1B register to 0 
+  
+  // Timer frequency = 16,000,000 / 256 = 62,500 Hz
+  // OCR1A value = Timer Frequency / Target Frequency - 1
+  // OCR1A = (62,500 Hz / 1 Hz) -1 = 62,499
+  // 62499 == 0xf423
+  
+  OCR1A = 0xf423;          // Set compare value for 1 Hz
+  
+  TCCR1B |= (1 << WGM12);  // turn on CTC mode
+
+  // Set prescaler to 256 (CS12 = 1, CS11 = 0, CS10 = 0)
+  TCCR1B |= _BV(CS12);  
+  TCCR1B &= ~_BV(CS11);
+  TCCR1B &= ~_BV(CS10);
+  
+  TIMSK1 |= _BV(OCIE1A);   // Enable interrupt when Timer1 reaches OCR1A 
+  
+  sei();                   // Enables global interrupts
+}
+
+// ISR for Timer1 CTC
+ISR(TIMER1_COMPA_vect)
+{
+  seconds += runState;   // Increment seconds when stopwatch is running
+  seconds = (seconds >= 100) ? 0 : seconds;  // Rollover at 99
+  
+  updateDisplayFlag = 1; // Signal main code to update display
+
+  // No need to reload TCNT1 manually on CTC mode
+}
+
+
+
+
+
