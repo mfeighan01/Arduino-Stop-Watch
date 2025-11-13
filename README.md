@@ -1,6 +1,6 @@
 # ATmega328 Stopwatch with Dual 7-Segment Display
 
-This project implements a simple digital stopwatch using an **ATmega328**, a **74HC595 shift register**, and **two common-anode 7-segment displays**. The stopwatch counts from 00 to 99 seconds using precise hardware timing, external interrupts for button control, and fast direct-port manipulation for display updates.
+This project implements a simple digital stopwatch using an **ATmega328**, two **74HC595 shift registers**, and two **common-anode 7-segment displays**. The stopwatch counts from 00 to 99 seconds using precise hardware timing, external interrupts for button control, and fast direct-port manipulation for display updates.
 
 ---
 
@@ -45,7 +45,7 @@ This project implements a simple digital stopwatch using an **ATmega328**, a **7
 * Timer1 generates a **1-second interrupt**.
 * When running, the ISR increments a counter (00–99).
 * A lookup table converts digits into 7-segment bit patterns.
-* These bytes are clocked into the 74HC595 using direct port writes for maximum speed.
+* These bytes are clocked into the 74HC595's using direct port writes for maximum speed.
 * External interrupts toggle the running state or reset the timer.
 
 ---
